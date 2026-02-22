@@ -27,7 +27,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Build search query
+    // Build search query - keep it simple for better results
     let searchQuery: string;
     let sourceProduct = {
       name: '',
@@ -36,7 +36,13 @@ export async function POST(request: NextRequest) {
     };
     
     if (parsed) {
-      searchQuery = `${parsed.brand} ${parsed.name} ${parsed.size}`.trim();
+      // Create a simple search query: brand + key product words + size
+      // Limit to most important terms for better matching
+      const nameWords = parsed.name.split(' ').slice(0, 3).join(' '); // First 3 words of name
+      searchQuery = `${parsed.brand} ${nameWords}`.trim();
+      if (parsed.size) {
+        searchQuery += ` ${parsed.size}`;
+      }
       sourceProduct = {
         name: parsed.name,
         brand: parsed.brand,
@@ -46,13 +52,16 @@ export async function POST(request: NextRequest) {
       // Extract from URL slug if parser didn't work
       const urlParts = url.split('/');
       const slug = urlParts.find(p => p.includes('-') && !p.includes('.')) || '';
-      searchQuery = slug.replace(/-/g, ' ');
+      // Take first 4 words from slug for simpler search
+      searchQuery = slug.replace(/-/g, ' ').split(' ').slice(0, 4).join(' ');
       sourceProduct = {
         name: searchQuery,
         brand: '',
         size: '',
       };
     }
+    
+    console.log('Search query:', searchQuery);
     
     const results: PriceResult[] = [];
     const requestedAt = new Date();
