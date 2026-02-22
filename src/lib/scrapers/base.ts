@@ -1,27 +1,77 @@
-import { chromium, Browser, BrowserContext, Page } from 'playwright';
+import { chromium, Browser, BrowserContext, Page } from 'playwright-core';
 import type { Platform, PriceResult } from '@/types';
+
+// Browserbase configuration from environment
+const BROWSERBASE_API_KEY = process.env.BROWSERBASE_API_KEY;
+const BROWSERBASE_PROJECT_ID = process.env.BROWSERBASE_PROJECT_ID;
 
 export abstract class BaseScraper {
   protected browser: Browser | null = null;
   protected context: BrowserContext | null = null;
   protected page: Page | null = null;
+  protected sessionId: string | null = null;
   
   abstract platform: Platform;
   
   async initialize(): Promise<void> {
-    // Launch with stealth-like settings
+    if (BROWSERBASE_API_KEY && BROWSERBASE_PROJECT_ID) {
+      console.log(`[${this.platform}] Using Browserbase cloud browser`);
+      await this.initializeBrowserbase();
+    } else {
+      console.log(`[${this.platform}] Using local Playwright (no Browserbase keys)`);
+      await this.initializeLocal();
+    }
+  }
+  
+  private async initializeBrowserbase(): Promise<void> {
+    // Create a Browserbase session via API
+    const response = await fetch('https://api.browserbase.com/v1/sessions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-BB-API-Key': BROWSERBASE_API_KEY!,
+      },
+      body: JSON.stringify({
+        projectId: BROWSERBASE_PROJECT_ID,
+        browserSettings: {
+          fingerprint: {
+            devices: ['desktop'],
+            locales: ['en-IN'],
+            operatingSystems: ['windows'],
+          },
+        },
+      }),
+    });
+    
+    if (!response.ok) {
+      const error = await response.text();
+      console.error('Browserbase session creation failed:', error);
+      throw new Error(`Failed to create Browserbase session: ${error}`);
+    }
+    
+    const session = await response.json();
+    this.sessionId = session.id;
+    console.log(`[${this.platform}] Browserbase session: ${session.id}`);
+    
+    // Connect to the session via CDP
+    this.browser = await chromium.connectOverCDP(session.connectUrl);
+    
+    // Get the default context
+    const contexts = this.browser.contexts();
+    this.context = contexts[0] || await this.browser.newContext();
+    
+    // Get or create page
+    const pages = this.context.pages();
+    this.page = pages[0] || await this.context.newPage();
+  }
+  
+  private async initializeLocal(): Promise<void> {
     this.browser = await chromium.launch({
       headless: true,
       args: [
         '--disable-blink-features=AutomationControlled',
-        '--disable-features=IsolateOrigins,site-per-process',
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-gpu',
       ],
     });
     
@@ -30,86 +80,28 @@ export abstract class BaseScraper {
       viewport: { width: 1920, height: 1080 },
       locale: 'en-IN',
       timezoneId: 'Asia/Kolkata',
-      geolocation: { latitude: 19.0760, longitude: 72.8777 }, // Mumbai
-      permissions: ['geolocation'],
-      extraHTTPHeaders: {
-        'Accept-Language': 'en-IN,en;q=0.9',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'none',
-        'Sec-Fetch-User': '?1',
-        'Cache-Control': 'max-age=0',
-      },
     });
     
-    // Add stealth scripts to evade detection
     await this.context.addInitScript(() => {
-      // Override webdriver property
-      Object.defineProperty(navigator, 'webdriver', {
-        get: () => undefined,
-      });
-      
-      // Override plugins
-      Object.defineProperty(navigator, 'plugins', {
-        get: () => [1, 2, 3, 4, 5],
-      });
-      
-      // Override languages
-      Object.defineProperty(navigator, 'languages', {
-        get: () => ['en-IN', 'en-US', 'en'],
-      });
-      
-      // Override platform
-      Object.defineProperty(navigator, 'platform', {
-        get: () => 'Win32',
-      });
-      
-      // Override hardwareConcurrency
-      Object.defineProperty(navigator, 'hardwareConcurrency', {
-        get: () => 8,
-      });
-      
-      // Override deviceMemory
-      Object.defineProperty(navigator, 'deviceMemory', {
-        get: () => 8,
-      });
-      
-      // Fix chrome object
-      (window as any).chrome = {
-        runtime: {},
-      };
-      
-      // Fix permissions
-      const originalQuery = window.navigator.permissions.query;
-      window.navigator.permissions.query = (parameters: any) =>
-        parameters.name === 'notifications'
-          ? Promise.resolve({ state: Notification.permission } as PermissionStatus)
-          : originalQuery(parameters);
+      Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
     });
     
     this.page = await this.context.newPage();
-    
-    // Block unnecessary resources to speed up loading
-    await this.page.route('**/*', (route) => {
-      const resourceType = route.request().resourceType();
-      if (['image', 'font', 'media'].includes(resourceType)) {
-        route.abort();
-      } else {
-        route.continue();
-      }
-    });
   }
   
   async cleanup(): Promise<void> {
-    await this.context?.close();
-    await this.browser?.close();
+    try {
+      await this.page?.close();
+      await this.context?.close();
+      await this.browser?.close();
+    } catch (e) {
+      console.error('Cleanup error:', e);
+    }
+    
     this.page = null;
     this.context = null;
     this.browser = null;
+    this.sessionId = null;
   }
   
   abstract setPincode(pincode: string): Promise<void>;
