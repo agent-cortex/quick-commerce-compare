@@ -98,15 +98,13 @@ export default function Home() {
               <span className="text-3xl">🟣</span>
               <span className="text-sm text-gray-600 mt-1">Zepto</span>
             </div>
-            <div className="flex flex-col items-center opacity-40">
+            <div className="flex flex-col items-center">
               <span className="text-3xl">🟡</span>
               <span className="text-sm text-gray-600 mt-1">Blinkit</span>
-              <span className="text-xs text-gray-400">Coming soon</span>
             </div>
-            <div className="flex flex-col items-center opacity-40">
+            <div className="flex flex-col items-center">
               <span className="text-3xl">🟠</span>
               <span className="text-sm text-gray-600 mt-1">Instamart</span>
-              <span className="text-xs text-gray-400">Coming soon</span>
             </div>
           </div>
         </div>

@@ -9,7 +9,7 @@ const requestSchema = z.object({
   pincode: z.string().regex(/^\d{6}$/, 'Invalid pincode'),
 });
 
-const TARGET_PLATFORMS: Platform[] = ['zepto'];
+const TARGET_PLATFORMS: Platform[] = ['zepto', 'instamart', 'blinkit'];
 
 export async function POST(request: NextRequest) {
   try {
