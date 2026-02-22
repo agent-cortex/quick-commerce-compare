@@ -3,12 +3,12 @@ import type { Platform, PriceResult } from '@/types';
 
 export class InstamartScraper extends BaseScraper {
   platform: Platform = 'instamart';
-  private baseUrl = 'https://www.swiggy.com/instamart';
+  private baseUrl = 'https://www.swiggy.com';
   
   async setPincode(pincode: string): Promise<void> {
     if (!this.page) throw new Error('Scraper not initialized');
     
-    await this.page.goto(this.baseUrl, { waitUntil: 'networkidle', timeout: 30000 });
+    await this.page.goto(`${this.baseUrl}/instamart`, { waitUntil: 'networkidle', timeout: 30000 });
     
     // Wait for page to load
     await this.page.waitForTimeout(2000);
@@ -16,11 +16,11 @@ export class InstamartScraper extends BaseScraper {
     // Try to find and set location
     try {
       const locationSelectors = [
-        'button:has-text("Change")',
-        'button:has-text("Add address")',
-        '[data-testid="location-input"]',
-        'input[placeholder*="area"]',
-        'input[placeholder*="location"]',
+        '[data-testid="location-select"]',
+        'button:has-text("Location")',
+        '[class*="location"]',
+        'button:has-text("Select")',
+        '[class*="address"]',
       ];
       
       for (const selector of locationSelectors) {
@@ -32,48 +32,33 @@ export class InstamartScraper extends BaseScraper {
         }
       }
       
-      // Try to find pincode/area input
-      const inputSelectors = [
+      // Try to find pincode input
+      const pincodeInputSelectors = [
         'input[placeholder*="pincode"]',
         'input[placeholder*="Pincode"]',
+        'input[type="text"][maxlength="6"]',
+        'input[placeholder*="PIN"]',
         'input[placeholder*="area"]',
-        'input[type="text"]',
       ];
       
-      for (const selector of inputSelectors) {
+      for (const selector of pincodeInputSelectors) {
         const input = await this.page.$(selector);
         if (input) {
           await input.fill(pincode);
-          await this.page.waitForTimeout(1000);
-          
-          // Try to click first suggestion or submit
-          const submitSelectors = [
-            'button:has-text("Confirm")',
-            'button:has-text("Proceed")',
-            '[role="button"]:has-text("Confirm")',
-            'li[role="option"]',
-          ];
-          
-          for (const submitSelector of submitSelectors) {
-            const submitBtn = await this.page.$(submitSelector);
-            if (submitBtn) {
-              await submitBtn.click();
-              await this.page.waitForTimeout(2000);
-              break;
-            }
-          }
+          await this.page.keyboard.press('Enter');
+          await this.page.waitForTimeout(2000);
           break;
         }
       }
     } catch (error) {
-      console.log('Could not set pincode on Instamart, proceeding with default location');
+      console.log('Could not set pincode, proceeding with default location');
     }
   }
   
   async searchProduct(query: string): Promise<PriceResult[]> {
     if (!this.page) throw new Error('Scraper not initialized');
     
-    const searchUrl = `${this.baseUrl}/search?query=${encodeURIComponent(query)}`;
+    const searchUrl = `${this.baseUrl}/instamart/search?query=${encodeURIComponent(query)}`;
     
     try {
       await this.page.goto(searchUrl, { waitUntil: 'networkidle', timeout: 30000 });
@@ -84,8 +69,8 @@ export class InstamartScraper extends BaseScraper {
         '[data-testid="product-item"]',
         '[class*="ProductCard"]',
         '[class*="product-card"]',
-        'a[href*="/item/"]',
-        '[class*="ProductTile"]',
+        '[class*="Product_product"]',
+        'a[href*="/instamart/item/"]',
       ];
       
       let products: PriceResult[] = [];
@@ -105,7 +90,7 @@ export class InstamartScraper extends BaseScraper {
       
       return products;
     } catch (error) {
-      console.error('Instamart search error:', error);
+      console.error('Search error:', error);
       return [];
     }
   }
@@ -119,24 +104,16 @@ export class InstamartScraper extends BaseScraper {
         const text = await card.textContent() || '';
         const href = await card.getAttribute('href') || await card.$eval('a', (a: Element) => a.getAttribute('href')).catch(() => '');
         
-        // Extract price using regex (Swiggy shows ₹ symbol)
+        // Extract price using regex
         const priceMatch = text.match(/₹\s*(\d+)/);
         const price = priceMatch ? parseInt(priceMatch[1]) : 0;
         
         // Try to find MRP (crossed out price)
-        const allPrices = text.match(/₹\s*(\d+)/g);
-        let mrp = price;
-        if (allPrices && allPrices.length > 1) {
-          const prices = allPrices.map((p: string) => parseInt(p.replace(/₹\s*/, '')));
-          mrp = Math.max(...prices);
-        }
+        const mrpMatch = text.match(/₹\s*(\d+).*₹\s*(\d+)/);
+        const mrp = mrpMatch ? parseInt(mrpMatch[2]) : price;
         
         // Extract name (first substantial text before price)
         const name = text.split('₹')[0].trim().slice(0, 100) || 'Unknown Product';
-        
-        // Check if out of stock
-        const isAvailable = !text.toLowerCase().includes('out of stock') && 
-                           !text.toLowerCase().includes('not available');
         
         if (price > 0) {
           products.push({
@@ -145,8 +122,8 @@ export class InstamartScraper extends BaseScraper {
             price,
             mrp: mrp > price ? mrp : price,
             discount: mrp > price ? Math.round((1 - price / mrp) * 100) : undefined,
-            available: isAvailable,
-            productUrl: href ? (href.startsWith('http') ? href : `https://www.swiggy.com${href}`) : this.baseUrl,
+            available: true,
+            productUrl: href ? `${this.baseUrl}${href.startsWith('/') ? '' : '/'}${href}` : this.baseUrl,
             confidence: 90 - i * 10,
             scrapedAt: new Date(),
           });
@@ -164,7 +141,7 @@ export class InstamartScraper extends BaseScraper {
     
     try {
       // Get all links that look like product links
-      const links = await this.page.$$('a[href*="/item/"]');
+      const links = await this.page.$$('a[href*="/instamart/item/"]');
       const products: PriceResult[] = [];
       const seenUrls = new Set<string>();
       
@@ -184,15 +161,14 @@ export class InstamartScraper extends BaseScraper {
           
           const price = parseInt(priceMatch[1]);
           const name = text.split('₹')[0].trim().slice(0, 100) || 'Product';
-          const isAvailable = !text.toLowerCase().includes('out of stock');
           
           products.push({
             platform: 'instamart',
             productName: name,
             price,
             mrp: price,
-            available: isAvailable,
-            productUrl: href.startsWith('http') ? href : `https://www.swiggy.com${href}`,
+            available: true,
+            productUrl: `${this.baseUrl}${href.startsWith('/') ? '' : '/'}${href}`,
             confidence: 80 - products.length * 10,
             scrapedAt: new Date(),
           });
@@ -221,28 +197,17 @@ export class InstamartScraper extends BaseScraper {
       const priceMatch = text.match(/₹\s*(\d+)/);
       const price = priceMatch ? parseInt(priceMatch[1]) : 0;
       
-      const titleEl = await this.page.$('h1') || await this.page.$('[class*="title"]') || await this.page.$('[class*="ProductTitle"]');
+      const titleEl = await this.page.$('h1') || await this.page.$('[class*="title"]');
       const title = titleEl ? await titleEl.textContent() : 'Product';
       
-      const isAvailable = !text.toLowerCase().includes('out of stock');
-      
       if (!price) return null;
-      
-      // Try to find MRP
-      const allPrices = text.match(/₹\s*(\d+)/g);
-      let mrp = price;
-      if (allPrices && allPrices.length > 1) {
-        const prices = allPrices.map((p: string) => parseInt(p.replace(/₹\s*/, '')));
-        mrp = Math.max(...prices);
-      }
       
       return {
         platform: 'instamart',
         productName: title?.trim() || 'Product',
         price,
-        mrp: mrp > price ? mrp : price,
-        discount: mrp > price ? Math.round((1 - price / mrp) * 100) : undefined,
-        available: isAvailable,
+        mrp: price,
+        available: true,
         productUrl: url,
         confidence: 100,
         scrapedAt: new Date(),

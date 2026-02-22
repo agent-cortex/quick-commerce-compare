@@ -20,8 +20,8 @@ export function parseProductUrl(url: string): ParsedUrl | null {
 
 export function detectPlatform(url: string): Platform | null {
   if (url.includes('zepto.com')) return 'zepto';
-  if (url.includes('blinkit.com')) return 'blinkit';
   if (url.includes('swiggy.com/instamart')) return 'instamart';
+  if (url.includes('blinkit.com')) return 'blinkit';
   return null;
 }
 

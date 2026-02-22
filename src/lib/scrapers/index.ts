@@ -4,7 +4,7 @@ import { BlinkitScraper } from './blinkit';
 import type { Platform } from '@/types';
 import { BaseScraper } from './base';
 
-export function createScraper(platform: Platform): BaseScraper | BlinkitScraper {
+export function createScraper(platform: Platform): BaseScraper | InstamartScraper | BlinkitScraper {
   switch (platform) {
     case 'zepto':
       return new ZeptoScraper();
