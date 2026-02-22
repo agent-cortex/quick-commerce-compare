@@ -60,7 +60,17 @@ export class ZeptoScraper extends BaseScraper {
     
     try {
       await this.page.goto(searchUrl, { waitUntil: 'networkidle', timeout: 30000 });
-      await this.page.waitForTimeout(3000);
+      await this.page.waitForTimeout(5000); // Extra wait for JS to render
+      
+      // Debug: log page title and URL
+      const title = await this.page.title();
+      const currentUrl = this.page.url();
+      console.log(`Zepto page loaded: ${title} | URL: ${currentUrl}`);
+      
+      // Debug: check for any product links
+      const allLinks = await this.page.$$('a');
+      const productLinks = await this.page.$$('a[href*="/pn/"]');
+      console.log(`Found ${allLinks.length} total links, ${productLinks.length} product links`);
       
       // Try multiple selectors for product cards
       const productCardSelectors = [
@@ -68,12 +78,16 @@ export class ZeptoScraper extends BaseScraper {
         '[class*="ProductCard"]',
         '[class*="product-card"]',
         'a[href*="/pn/"]',
+        '[class*="productCard"]',
+        '[class*="item-card"]',
+        '[class*="ItemCard"]',
       ];
       
       let products: PriceResult[] = [];
       
       for (const cardSelector of productCardSelectors) {
         const cards = await this.page.$$(cardSelector);
+        console.log(`Selector "${cardSelector}": found ${cards.length} elements`);
         if (cards.length > 0) {
           products = await this.extractProductsFromCards(cards.slice(0, 5));
           if (products.length > 0) break;
@@ -83,6 +97,12 @@ export class ZeptoScraper extends BaseScraper {
       // If no products found via cards, try extracting from page content
       if (products.length === 0) {
         products = await this.extractProductsFromPage();
+      }
+      
+      // Debug: if still no products, log some page content
+      if (products.length === 0) {
+        const bodyText = await this.page.textContent('body') || '';
+        console.log(`Page text sample (first 500 chars): ${bodyText.substring(0, 500)}`);
       }
       
       return products;
