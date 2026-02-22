@@ -8,48 +8,32 @@ export class ZeptoScraper extends BaseScraper {
   async setPincode(pincode: string): Promise<void> {
     if (!this.page) throw new Error('Scraper not initialized');
     
-    await this.page.goto(this.baseUrl, { waitUntil: 'networkidle', timeout: 30000 });
+    await this.page.goto(this.baseUrl, { waitUntil: 'networkidle', timeout: 60000 });
+    await this.page.waitForTimeout(3000);
     
-    // Wait for page to load
-    await this.page.waitForTimeout(2000);
-    
-    // Try to find and click location widget
     try {
-      const locationSelectors = [
-        '[data-testid="location-widget"]',
-        'button:has-text("Deliver to")',
-        '[class*="location"]',
-        'button:has-text("Add address")',
-      ];
+      // Click on location selector
+      const locationBtn = await this.page.$('button:has-text("Select Location")') ||
+                          await this.page.$('button:has-text("Deliver to")') ||
+                          await this.page.$('[class*="location"]');
       
-      for (const selector of locationSelectors) {
-        const element = await this.page.$(selector);
-        if (element) {
-          await element.click();
-          await this.page.waitForTimeout(1000);
-          break;
-        }
-      }
-      
-      // Try to find pincode input
-      const pincodeInputSelectors = [
-        'input[placeholder*="pincode"]',
-        'input[placeholder*="Pincode"]',
-        'input[type="text"][maxlength="6"]',
-        'input[placeholder*="area"]',
-      ];
-      
-      for (const selector of pincodeInputSelectors) {
-        const input = await this.page.$(selector);
-        if (input) {
-          await input.fill(pincode);
+      if (locationBtn) {
+        await locationBtn.click();
+        await this.page.waitForTimeout(1000);
+        
+        // Find pincode input
+        const pincodeInput = await this.page.$('input[placeholder*="pincode"]') ||
+                            await this.page.$('input[placeholder*="area"]') ||
+                            await this.page.$('input[type="text"]');
+        
+        if (pincodeInput) {
+          await pincodeInput.fill(pincode);
           await this.page.keyboard.press('Enter');
           await this.page.waitForTimeout(2000);
-          break;
         }
       }
     } catch (error) {
-      console.log('Could not set pincode, proceeding with default location');
+      console.log(`[zepto] Could not set pincode ${pincode}, using default location`);
     }
   }
   
@@ -59,145 +43,90 @@ export class ZeptoScraper extends BaseScraper {
     const searchUrl = `${this.baseUrl}/search?q=${encodeURIComponent(query)}`;
     
     try {
-      await this.page.goto(searchUrl, { waitUntil: 'networkidle', timeout: 30000 });
-      await this.page.waitForTimeout(5000); // Extra wait for JS to render
+      console.log(`[zepto] Navigating to: ${searchUrl}`);
+      await this.page.goto(searchUrl, { waitUntil: 'networkidle', timeout: 60000 });
+      await this.page.waitForTimeout(5000);
       
-      // Debug: log page title and URL
       const title = await this.page.title();
-      const currentUrl = this.page.url();
-      console.log(`Zepto page loaded: ${title} | URL: ${currentUrl}`);
+      console.log(`[zepto] Page loaded: ${title}`);
       
-      // Debug: check for any product links
-      const allLinks = await this.page.$$('a');
-      const productLinks = await this.page.$$('a[href*="/pn/"]');
-      console.log(`Found ${allLinks.length} total links, ${productLinks.length} product links`);
-      
-      // Try multiple selectors for product cards
-      const productCardSelectors = [
-        '[data-testid="product-card"]',
-        '[class*="ProductCard"]',
-        '[class*="product-card"]',
-        'a[href*="/pn/"]',
-        '[class*="productCard"]',
-        '[class*="item-card"]',
-        '[class*="ItemCard"]',
-      ];
-      
-      let products: PriceResult[] = [];
-      
-      for (const cardSelector of productCardSelectors) {
-        const cards = await this.page.$$(cardSelector);
-        console.log(`Selector "${cardSelector}": found ${cards.length} elements`);
-        if (cards.length > 0) {
-          products = await this.extractProductsFromCards(cards.slice(0, 5));
-          if (products.length > 0) break;
-        }
-      }
-      
-      // If no products found via cards, try extracting from page content
-      if (products.length === 0) {
-        products = await this.extractProductsFromPage();
-      }
-      
-      // Debug: if still no products, log some page content
-      if (products.length === 0) {
-        const bodyText = await this.page.textContent('body') || '';
-        console.log(`Page text sample (first 500 chars): ${bodyText.substring(0, 500)}`);
-      }
-      
-      return products;
-    } catch (error) {
-      console.error('Search error:', error);
-      return [];
-    }
-  }
-  
-  private async extractProductsFromCards(cards: any[]): Promise<PriceResult[]> {
-    const products: PriceResult[] = [];
-    
-    for (let i = 0; i < cards.length; i++) {
-      try {
-        const card = cards[i];
-        const text = await card.textContent() || '';
-        const href = await card.getAttribute('href') || await card.$eval('a', (a: Element) => a.getAttribute('href')).catch(() => '');
+      // Extract products using page.evaluate for better control
+      const products = await this.page.evaluate(() => {
+        const results: Array<{
+          name: string;
+          price: number;
+          mrp: number;
+          url: string;
+          imageUrl?: string;
+        }> = [];
         
-        // Extract price using regex
-        const priceMatch = text.match(/₹\s*(\d+)/);
-        const price = priceMatch ? parseInt(priceMatch[1]) : 0;
+        // Find all product links
+        const productLinks = document.querySelectorAll('a[href*="/pn/"]');
+        const seenUrls = new Set<string>();
         
-        // Try to find MRP (crossed out price)
-        const mrpMatch = text.match(/₹\s*(\d+).*₹\s*(\d+)/);
-        const mrp = mrpMatch ? parseInt(mrpMatch[2]) : price;
-        
-        // Extract name (first substantial text)
-        const name = text.split('₹')[0].trim().slice(0, 100) || 'Unknown Product';
-        
-        if (price > 0) {
-          products.push({
-            platform: 'zepto',
-            productName: name,
-            price,
-            mrp: mrp > price ? mrp : price,
-            discount: mrp > price ? Math.round((1 - price / mrp) * 100) : undefined,
-            available: true,
-            productUrl: href ? `${this.baseUrl}${href.startsWith('/') ? '' : '/'}${href}` : this.baseUrl,
-            confidence: 90 - i * 10,
-            scrapedAt: new Date(),
-          });
-        }
-      } catch {
-        continue;
-      }
-    }
-    
-    return products;
-  }
-  
-  private async extractProductsFromPage(): Promise<PriceResult[]> {
-    if (!this.page) return [];
-    
-    try {
-      // Get all links that look like product links
-      const links = await this.page.$$('a[href*="/pn/"]');
-      const products: PriceResult[] = [];
-      const seenUrls = new Set<string>();
-      
-      for (let i = 0; i < Math.min(links.length, 10); i++) {
-        try {
-          const link = links[i];
-          const href = await link.getAttribute('href') || '';
-          
-          if (seenUrls.has(href)) continue;
+        productLinks.forEach((link) => {
+          const href = link.getAttribute('href') || '';
+          if (seenUrls.has(href) || !href.includes('/pn/')) return;
           seenUrls.add(href);
           
-          const parent = await link.$('xpath=..');
-          const text = await (parent || link).textContent() || '';
+          // Extract product name from URL slug (most reliable)
+          const slugMatch = href.match(/\/pn\/([^/]+)\//);
+          if (!slugMatch) return;
           
-          const priceMatch = text.match(/₹\s*(\d+)/);
-          if (!priceMatch) continue;
+          const slug = slugMatch[1];
+          // Convert slug to readable name: "amul-butter-500-g" -> "Amul Butter 500 G"
+          const nameFromSlug = slug
+            .split('-')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
           
-          const price = parseInt(priceMatch[1]);
-          const name = text.split('₹')[0].trim().slice(0, 100) || 'Product';
+          // Try to get price from the link's parent container
+          const container = link.closest('div') || link;
+          const text = container.textContent || '';
           
-          products.push({
-            platform: 'zepto',
-            productName: name,
+          // Extract prices - look for ₹ followed by numbers
+          const priceMatches = text.match(/₹\s*(\d+)/g) || [];
+          const prices = priceMatches.map(p => parseInt(p.replace(/[₹\s]/g, '')));
+          
+          if (prices.length === 0) return;
+          
+          // Usually first price is selling price, second is MRP
+          const price = Math.min(...prices);
+          const mrp = Math.max(...prices);
+          
+          // Get image if available
+          const img = link.querySelector('img');
+          const imageUrl = img?.src || img?.getAttribute('data-src') || undefined;
+          
+          results.push({
+            name: nameFromSlug,
             price,
-            mrp: price,
-            available: true,
-            productUrl: `${this.baseUrl}${href.startsWith('/') ? '' : '/'}${href}`,
-            confidence: 80 - products.length * 10,
-            scrapedAt: new Date(),
+            mrp: mrp || price,
+            url: href,
+            imageUrl,
           });
-          
-          if (products.length >= 5) break;
-        } catch {
-          continue;
-        }
-      }
+        });
+        
+        return results.slice(0, 10);
+      });
       
-      return products;
-    } catch {
+      console.log(`[zepto] Extracted ${products.length} products`);
+      
+      // Convert to PriceResult format
+      return products.map((p, idx) => ({
+        platform: 'zepto' as Platform,
+        productName: p.name,
+        price: p.price,
+        mrp: p.mrp,
+        discount: p.mrp > p.price ? Math.round((1 - p.price / p.mrp) * 100) : undefined,
+        available: true,
+        productUrl: p.url.startsWith('http') ? p.url : `${this.baseUrl}${p.url}`,
+        confidence: Math.max(50, 95 - idx * 5),
+        scrapedAt: new Date(),
+      }));
+      
+    } catch (error) {
+      console.error('[zepto] Search error:', error);
       return [];
     }
   }
@@ -206,30 +135,40 @@ export class ZeptoScraper extends BaseScraper {
     if (!this.page) throw new Error('Scraper not initialized');
     
     try {
-      await this.page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
-      await this.page.waitForTimeout(2000);
+      await this.page.goto(url, { waitUntil: 'networkidle', timeout: 60000 });
+      await this.page.waitForTimeout(3000);
       
-      const text = await this.page.textContent('body') || '';
+      const product = await this.page.evaluate(() => {
+        // Get product name from h1 or title
+        const h1 = document.querySelector('h1');
+        const name = h1?.textContent?.trim() || document.title.split('|')[0].trim();
+        
+        // Get prices
+        const text = document.body.textContent || '';
+        const priceMatches = text.match(/₹\s*(\d+)/g) || [];
+        const prices = priceMatches.map(p => parseInt(p.replace(/[₹\s]/g, '')));
+        
+        const price = prices.length > 0 ? Math.min(...prices) : 0;
+        const mrp = prices.length > 1 ? Math.max(...prices) : price;
+        
+        return { name, price, mrp };
+      });
       
-      const priceMatch = text.match(/₹\s*(\d+)/);
-      const price = priceMatch ? parseInt(priceMatch[1]) : 0;
-      
-      const titleEl = await this.page.$('h1') || await this.page.$('[class*="title"]');
-      const title = titleEl ? await titleEl.textContent() : 'Product';
-      
-      if (!price) return null;
+      if (!product.price) return null;
       
       return {
         platform: 'zepto',
-        productName: title?.trim() || 'Product',
-        price,
-        mrp: price,
+        productName: product.name,
+        price: product.price,
+        mrp: product.mrp,
+        discount: product.mrp > product.price ? Math.round((1 - product.price / product.mrp) * 100) : undefined,
         available: true,
         productUrl: url,
         confidence: 100,
         scrapedAt: new Date(),
       };
-    } catch {
+    } catch (error) {
+      console.error('[zepto] Product details error:', error);
       return null;
     }
   }
