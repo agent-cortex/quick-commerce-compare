@@ -72,18 +72,59 @@ export abstract class BaseScraper {
         '--disable-blink-features=AutomationControlled',
         '--no-sandbox',
         '--disable-setuid-sandbox',
+        '--disable-web-security',
+        '--disable-features=IsolateOrigins,site-per-process',
+        '--disable-dev-shm-usage',
       ],
     });
     
     this.context = await this.browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+      userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
       viewport: { width: 1920, height: 1080 },
       locale: 'en-IN',
       timezoneId: 'Asia/Kolkata',
+      extraHTTPHeaders: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-IN,en-US;q=0.9,en;q=0.8',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'DNT': '1',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'none',
+      },
     });
     
     await this.context.addInitScript(() => {
+      // Hide webdriver
       Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+      
+      // Mock chrome object
+      (window as any).chrome = {
+        runtime: {},
+        loadTimes: function() {},
+        csi: function() {},
+        app: {},
+      };
+      
+      // Mock plugins
+      Object.defineProperty(navigator, 'plugins', {
+        get: () => [1, 2, 3, 4, 5],
+      });
+      
+      // Mock languages
+      Object.defineProperty(navigator, 'languages', {
+        get: () => ['en-IN', 'en-US', 'en'],
+      });
+      
+      // Mock permissions
+      const originalQuery = window.navigator.permissions.query;
+      window.navigator.permissions.query = (parameters: any) => (
+        parameters.name === 'notifications' ?
+          Promise.resolve({ state: 'denied' } as PermissionStatus) :
+          originalQuery(parameters)
+      );
     });
     
     this.page = await this.context.newPage();

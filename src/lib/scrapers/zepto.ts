@@ -50,6 +50,17 @@ export class ZeptoScraper extends BaseScraper {
       const title = await this.page.title();
       console.log(`[zepto] Page loaded: ${title}`);
       
+      // Check for rate limiting or errors
+      const bodyText = await this.page.textContent('body') || '';
+      if (bodyText.includes('HTTP ERROR 429') || bodyText.includes('Too Many Requests')) {
+        console.log('[zepto] Rate limited (429)');
+        return [];
+      }
+      if (bodyText.includes('HTTP ERROR') || bodyText.includes("This page isn't working")) {
+        console.log('[zepto] Page error detected');
+        return [];
+      }
+      
       // Extract products using page.evaluate for better control
       const products = await this.page.evaluate(() => {
         const results: Array<{

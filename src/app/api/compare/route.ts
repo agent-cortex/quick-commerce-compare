@@ -36,13 +36,18 @@ export async function POST(request: NextRequest) {
     };
     
     if (parsed) {
-      // Create a simple search query: brand + key product words + size
-      // Limit to most important terms for better matching
-      const nameWords = parsed.name.split(' ').slice(0, 3).join(' '); // First 3 words of name
-      searchQuery = `${parsed.brand} ${nameWords}`.trim();
-      if (parsed.size) {
-        searchQuery += ` ${parsed.size}`;
-      }
+      // Create an effective search query
+      // Strategy: brand + core product name (2-4 key words)
+      const nameWords = parsed.name.split(' ')
+        .filter(w => {
+          // Filter out common filler words
+          const fillers = ['with', 'and', 'or', 'the', 'of', 'in', 'on', 'for'];
+          return !fillers.includes(w.toLowerCase()) && w.length > 1;
+        })
+        .slice(0, 4); // Take first 4 meaningful words
+      
+      searchQuery = `${parsed.brand} ${nameWords.join(' ')}`.trim();
+      
       sourceProduct = {
         name: parsed.name,
         brand: parsed.brand,
@@ -66,7 +71,7 @@ export async function POST(request: NextRequest) {
     const results: PriceResult[] = [];
     const requestedAt = new Date();
     
-    // Scrape each target platform
+    // Scrape each target platform with delays to avoid rate limiting
     for (const platform of TARGET_PLATFORMS) {
       const scraper = createScraper(platform);
       
@@ -74,8 +79,14 @@ export async function POST(request: NextRequest) {
         console.log(`Initializing ${platform} scraper...`);
         await scraper.initialize();
         
+        // Add delay between scrapers to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        
         console.log(`Setting pincode ${pincode}...`);
         await scraper.setPincode(pincode);
+        
+        // Another delay before search
+        await new Promise(resolve => setTimeout(resolve, 2000));
         
         console.log(`Searching for: ${searchQuery}`);
         const platformResults = await scraper.searchProduct(searchQuery);
