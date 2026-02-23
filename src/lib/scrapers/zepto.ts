@@ -74,10 +74,32 @@ export class ZeptoScraper extends BaseScraper {
           if (!slugMatch) return;
           
           const slug = slugMatch[1];
-          // Convert slug to readable name: "amul-butter-500-g" -> "Amul Butter 500 G"
+          // Convert slug to readable name with proper unit handling
+          // "amul-butter-500-g" -> "Amul Butter 500 G"
+          // "lays-chips-50g" -> "Lays Chips 50 G" (handles attached units)
           const nameFromSlug = slug
             .split('-')
-            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .map(word => {
+              // Measurement units that should be uppercase
+              const units = ['g', 'kg', 'ml', 'l', 'mg', 'gm', 'ltr'];
+              
+              // Check if word is a standalone unit
+              if (units.includes(word.toLowerCase())) {
+                return word.toUpperCase();
+              }
+              
+              // Check if word is number+unit without hyphen (e.g., "50g", "2l")
+              const unitMatch = word.match(/^(\d+)([a-z]+)$/i);
+              if (unitMatch) {
+                const [, number, unit] = unitMatch;
+                if (units.includes(unit.toLowerCase())) {
+                  return `${number} ${unit.toUpperCase()}`;
+                }
+              }
+              
+              // Regular word - capitalize first letter
+              return word.charAt(0).toUpperCase() + word.slice(1);
+            })
             .join(' ');
           
           // Try to get price from the link's parent container
